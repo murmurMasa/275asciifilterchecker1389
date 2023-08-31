@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>画像フィルター・チェッカー</title>
+<script>
+let canvas, context;        //キャンバス
+let imageData = null, size; //画像データ、フィルターサイズ
+const [width, height, cw] = [600, 600, 100];    //キャンバス、チェッカーサイズ
+
+const init = () => {
+    //キャンバスの取得
+    canvas = document.getElementById("image");  //キャンバスを取得
+    context = canvas.getContext("2d");
+    [canvas.width, canvas.height] = [width, height];    //キャンバスのサイズを600×600に
+    //フィルター入力欄の作成
+    setInputs();
+    //チェッカーの移動
+    canvas.addEventListener("mousemove", event => {     //キャンバス上でマウスを動かしたとき
+        const canvasRect = canvas.getBoundingClientRect();  //キャンバス内のカーソルの座標
+        const x = event.clientX - canvasRect.left;
+        const y = event.clientY - canvasRect.top;
+        if (imageData != null) filter(x,y);             //画像があるなら、filter()関数を実行
+    });
+}
+
+const loadImage = files => {            //「ファイルを選択」ボタンで指定した画像ファイル
+    //画像の読み込み
+    const image = new Image();
+    if (files.length > 0) image.src = URL.createObjectURL(files[0]);
+    image.onload = () => {
+        //画像を描画
+        let sx, sy, sw, sh;
+        if (image.width > image.height) {                       //画像のサイズと表示位置を調整
+            [sw,sh] = [image.width, image.width*height/width];
+            [sx,sy] = [0, image.height/2 - sh/2];
+        } else {
+            [sw,sh] = [image.height*width/height, image.height];
+            [sx,sy] = [image.width/2 - sw/2, 0];
+        }
+        context.fillStyle = "#000000";                          //黒でキャンバスを塗りつぶす
+        context.fillRect(0, 0, width, height);
+        context.drawImage(image, sx, sy, sw, sh, 0, 0, width, height);      //読み込んだ画像を表示
+        imageData = context.getImageData(0, 0, width, height);        
+    }
+}
+
+const setInputs = () => {
+    //フィルター入力欄の作成
+    size = Number(document.getElementById("size").value);       //サイズの値を取得
+    document.getElementById("Inputs").innerHTML = "";           //フィルター入力欄をクリア
+    for (let i=0; i<size*2+1; i++) {                            //3x3もしくは5x5回分くり返し
+        const div = document.createElement("div");
+        for (let j=0; j<size*2+1; j++) {
+            const input = document.createElement("input");          //入力フォームを作成
+            input.id = `w_${i}_${j}`;
+            input.type = "text";
+            input.value = 0;                                        //中央の入力フォームの値を1に、その他は０にする
+            if ((i == size)&&(j == size)) input.value = 1;
+            div.appendChild(input);
+        }
+        document.getElementById("Inputs").appendChild(div);         //フィルター入力欄に追加
+    }
+    document.getElementById("edge1").disabled = false;              //サイズが３ｘ３のとき、「ラプラシアン」「エンボス」「シャープ」ボタンを有効に、５ｘ５なら無効にする
+    document.getElementById("edge2").disabled = false;
+    document.getElementById("edge3").disabled = false;
+    if (size == 2) {
+        document.getElementById("edge1").disabled = true;
+        document.getElementById("edge2").disabled = true;
+        document.getElementById("edge3").disabled = true;
+    }
+}
+
+const setFilter = button => {           //フィルターボタンを押したとき
+    //フィルターをセット
+    const filterType = button.id;       //ボタンのIDを取得
+    let w = new Array(size*2+1);
+    if (filterType == "blur1") {        //「平均化」のとき
+        //平均化
+        for (let i=0; i<size*2+1; i++) {        //すべてのマスの値を１／９または１／２５（平均値）にする
+            w[i] = new Array(size*2+1).fill(1/(size*2+1)**2);
+        }
+    } else if (filterType == "blur2") {         //「モーション」のとき
+        //モーション
+        for (let i=0; i<size*2+1; i++) {
+            w[i] = new Array(size*2+1).fill(0); //左上から右下がりのマスを1/3または1/5に、残りを０にする
+            for (let j=0; j<size*2+1; j++) {
+                if ( i == j ) w[i][j] = 1/(size*2+1);
+            }
+        }
+    } else {                                                            //「ラプラシアン」「エンボス」「シャープ」のとき
+        //ラプラシアン
+        if (filterType == "edge1") w = [[1,1,1],[1,-8,1],[1,1,1]];      //マスを値を指定されたものにする
+        //エンボス
+        if (filterType == "edge2") w = [[-2,-1,0],[-1,1,1],[0,1,2]];
+        //シャープ
+        if (filterType == "edge3") w = [[-1,-1,-1],[-1,9,-1],[-1,-1,-1]];
+    }
+    for (let i=0; i<size*2+1; i++) {
+        for (let j=0; j<size*2+1; j++) {
+            document.getElementById(`w_${i}_${j}`).value = w[i][j];     //入力フォームにマスの値を入れる
+        }
+    }
+}   
+
+const filter = (cx, cy) => {
+    //チェッカーの始点、終点を取得
+    let [sx,sy,ex,ey] = [cx - cw/2, cy - cw/2, cx + cw/2, cy + cw/2];   //マウスカーソルを中心に100x100の左上座標、右下座標を計算
+    if (sx - size < 0) sx = size;       //キャンバスからはみ出す時は、座標を調整
+    if (sy - size < 0) sy = size;
+    if (ex + size > width) ex = width - size;
+    if (ey + size > height) ey = height - size;
+    //画像フィルター
+    const checkData = context.createImageData(ex-sx, ey-sy);    //チェッカーを新しい画像データとして作成
+    for (let y=sy; y<ey; y++) {     //チェッカーのサイズぶん繰り返し
+        for (let x=sx; x<ex; x++) {
+            let [r, g, b] = [0, 0, 0];
+            for (let i=-size; i<=size; i++) {                   //3x3または5x5回繰り返し
+                for (let j=-size; j<=size; j++) {
+                    const index = ((y+i)*width + (x+j))*4;
+                    const w = getWeight(i+size,j+size);         //入力フォームに入力した重みを掛けて、マウスカーソルの周りのＲＧＢデータを合計する
+                    r += imageData.data[index] * w;
+                    g += imageData.data[index+1] * w;
+                    b += imageData.data[index+2] * w;
+                }
+            }
+            if (document.getElementById("mono").checked) {      //「モノクロ」がチェックされていたなら
+                const mono = 0.299 * r + 0.587 * g + 0.114 * b; //色を輝度に変換
+                [r, g, b] = [mono, mono, mono];
+            }
+            if (document.getElementById("reverse").checked) {   //「反転」がチェックされていたなら
+                [r, g, b] = [255-r, 255-g, 255-b];              //255からRGBの値を引く
+            }
+            const cIndex = ((y-sy)*(ex-sx) + (x-sx))*4;
+            checkData.data[cIndex] = Math.floor(r);
+            checkData.data[cIndex+1] = Math.floor(g);
+            checkData.data[cIndex+2] = Math.floor(b);
+            checkData.data[cIndex+3] = 255;
+        }
+    }
+    context.putImageData(imageData,0,0);        //元画像を表示
+    context.putImageData(checkData,sx,sy);      //チェッカーを表示
+    context.strokeRect(sx,sy,ex-sx,ey-sy);      //チェッカーを黒線で囲む
+}
+
+const getWeight = (i, j) => {
+    //重み係数を取得
+    return document.getElementById(`w_${i}_${j}`).value;
+}
+</script>
+<style>
+canvas {
+    float: left;
+    margin-right: 10px;
+    border: thin solid #CCCCCC;
+}
+input[type="text"] {width: 30px;}
+input[type="button"] {margin-top: 5px;}
+</style>
+</head>
+<body onload="init()">
+<p>画像フィルター・チェッカー</p>
+<input type="file" accept="image/*" onchange="loadImage(this.files)"><hr>
+<canvas id="image"></canvas>
+<div>
+サイズ：<select id="size" onchange="setInputs()">
+<option value="1">３×３
+<option value="2">５×５
+</select>
+<div id="Inputs"></div>
+<input type="checkbox" id="mono">モノクロ<br>
+<input type="checkbox" id="reverse">反転<br>
+<input type="button" value="平均化" id="blur1" onclick="setFilter(this)"><br>
+<input type="button" value="モーション" id="blur2" onclick="setFilter(this)"><br>
+<input type="button" value="ラプラシアン" id="edge1" onclick="setFilter(this)"><br>
+<input type="button" value="エンボス" id="edge2" onclick="setFilter(this)"><br>
+<input type="button" value="シャープ" id="edge3" onclick="setFilter(this)">
+</div>
+</body>
+</html>
